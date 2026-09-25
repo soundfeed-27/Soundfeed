@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#07070a">
+<meta name="description" content="SOUNDFEED — Immersion sound engine. Original generative music in the browser.">
+<title>SOUNDFEED</title>
+<style>
+  body{margin:0;background:#07070a;color:#eee;font-family:system-ui,sans-serif;text-align:center;padding:24px 16px 40px}
+  #ringWrap{width:150px;height:150px;margin:0 auto;transition:transform .1s}
+  #ring{width:100%;height:100%;animation:spin 40s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h1{letter-spacing:8px;margin:10px 0 2px;font-weight:800}
+  .sub{color:#999;margin:0 0 16px}
+  button{font-size:18px;padding:12px 22px;margin:6px;border:0;border-radius:10px;background:#ff4d2e;color:#fff;font-weight:700;cursor:pointer}
+  #stop{background:#444} #cut{background:#b00000;width:90%;max-width:360px;font-size:20px}
+  button:disabled{opacity:.45;cursor:default}
+  .panel{max-width:380px;margin:14px auto;padding:10px 14px;border:1px solid #222;border-radius:12px;text-align:left;background:#0e0e13}
+  .panel h3{margin:4px 0 8px;color:#ff4d2e;font-size:14px;letter-spacing:2px}
+  label{display:block;margin:10px 0;font-size:14px}
+  input[type=range],select{width:100%;margin-top:4px}
+  select{font-size:16px;padding:6px;background:#1a1a22;color:#eee;border:1px solid #333;border-radius:8px}
+  #meter{height:10px;background:#1a1a22;border-radius:5px;overflow:hidden;margin-top:6px}
+  #meterBar{height:100%;width:0;background:linear-gradient(90deg,#2ecc71,#f1c40f 70%,#ff4d2e)}
+  small,footer{color:#888;font-size:12px}
+  footer{margin-top:24px}
+</style>
+</head>
+<body>
+  <div id="ringWrap">
+    <svg id="ring" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="#ff4d2e" stroke-width="10" stroke-dasharray="17.94 3"/></svg>
+  </div>
+  <h1>SOUNDFEED</h1>
+  <p class="sub">Immersion sound engine</p>
+
+  <button type="button" id="start">Start</button><button type="button" id="stop">Stop</button><br>
+  <button type="button" id="cut">EMERGENCY CUT</button>
+
+  <div class="panel">
+    <h3>SAFETY</h3>
+    <label>Master volume <input id="vol" type="range" min="0" max="100" value="30"></label>
+    <div>Output level <span id="meterText">-∞ dBFS</span> · Session <span id="timer">0:00</span></div>
+    <div id="meter"><div id="meterBar"></div></div>
+    <small id="status">Start quiet and raise slowly. Take a break every 30 minutes. The meter shows digital level, not how loud it is in the room.</small>
+  </div>
+
+  <div class="panel">
+    <h3>SCENE</h3>
+    <label>Mood <select id="scene"></select></label>
+    <label>Acoustic space <select id="space"></select></label>
+    <label>Tuning <select id="tuning"><option value="440">Standard (A = 440 Hz)</option><option value="285">Rooted on 285 Hz</option></select></label>
+    <label>Slow-down <span id="stretchVal"></span><input id="stretch" type="range" min="1" max="8" step="0.5" value="1"></label>
+  </div>
+
+  <div class="panel">
+    <h3>LAYERS</h3>
+    <label>Reverb amount <input id="reverb" type="range" min="0" max="100"></label>
+    <label>Choir <input id="choir" type="range" min="0" max="100"></label>
+    <label>Space synth pad <input id="pad" type="range" min="0" max="100"></label>
+    <label>Monastic chant <input id="chant" type="range" min="0" max="100"></label>
+    <label>Organ drone <input id="drone" type="range" min="0" max="100"></label>
+    <label>Low-frequency core <input id="core" type="range" min="0" max="100"></label>
+    <label>Choir voices <select id="range"><option value="deep">Deep (male)</option><option value="full">Full</option><option value="high">High</option></select></label>
+    <label>Vowel <select id="vowel"><option value="ah">Ah</option><option value="oh">Oh</option><option value="oo">Oo</option></select></label>
+    <label><input id="bells" type="checkbox"> Cathedral bells</label>
+    <label><input id="binaural" type="checkbox"> Binaural layer (headphones only)</label>
+  </div>
+
+  <div class="panel">
+    <h3>CROSSOVER (4-WAY)</h3>
+    <label>Sub (below 60 Hz) <input id="sub" type="range" min="0" max="150" value="100"></label>
+    <label>Low (60 to 250 Hz) <input id="low" type="range" min="0" max="150" value="100"></label>
+    <label>Mid (250 Hz to 4 kHz) <input id="mid" type="range" min="0" max="150" value="100"></label>
+    <label>High (above 4 kHz) <input id="high" type="range" min="0" max="150" value="100"></label>
+    <small>Phone speakers can't reproduce the sub band. Use good headphones or a subwoofer to hear it.</small>
+  </div>
+
+  <footer>SOUNDFEED™ · Original sound engine and music © 2026 ALEN DIVULJSKI. All rights reserved.</footer>
+
+<script>
+/* SOUNDFEED sound engine. Original work (c) 2026 ALEN DIVULJSKI. All rights reserved. */
+var SOUNDFEED = (function () {
+  var mtof = function (m) { return 440 * Math.pow(2, (m - 69) / 12); };
+
+  var SPACES = {
+    room:       { name: "Studio room",          seconds: 1.2, tone: 9000,  reverb: 0.30 },
+    hall:       { name: "Concert hall",         seconds: 3.5, tone: 6000,  reverb: 0.50 },
+    monastery:  { name: "Stone monastery",      seconds: 6,   tone: 3500,  reverb: 0.70 },
+    cathedral:  { name: "Cathedral",            seconds: 9,   tone: 4000,  reverb: 0.80 },
+    industrial: { name: "Industrial warehouse", seconds: 5,   tone: 2500,  reverb: 0.60, metallic: true },
+    outdoor:    { name: "Outdoor arena",        seconds: 0.8, tone: 12000, reverb: 0.15 },
+    cosmos:     { name: "Deep space",           seconds: 12,  tone: 7000,  reverb: 0.85 }
+  };
+
+  // Each scene: 5-note chords (MIDI numbers) plus default mix settings
+  var SCENES = {
+    descent: { name: "Descent (dark cathedral choir)",
+      chords: [[50,57,62,65,69],[46,53,58,62,65],[43,50,55,58,62],[45,52,57,61,64]],
+      choir: 0.8, pad: 0.25, chant: 0, drone: 0.7, core: 0.5, space: "cathedral", tuning: "440", stretch: 1, bells: true, range: "full", vowel: "ah" },
+    abyss: { name: "Abyss (deep drone)",
+      chords: [[38,45,50,53,57],[38,45,50,51,57],[37,44,49,52,56],[38,45,50,53,57]],
+      choir: 0.5, pad: 0.45, chant: 0, drone: 0.9, core: 0.8, space: "industrial", tuning: "440", stretch: 2, bells: false, range: "deep", vowel: "oh" },
+    space: { name: "Space (slow synth)",
+      chords: [[50,57,61,64,66],[47,54,57,61,62],[43,50,54,57,61],[45,52,57,59,64]],
+      choir: 0.15, pad: 0.9, chant: 0, drone: 0.4, core: 0.4, space: "cosmos", tuning: "440", stretch: 4, bells: false, range: "high", vowel: "oo" },
+    tenebrae: { name: "Tenebrae (monastic chant)",
+      chords: [[38,45,50,57,62],[38,45,50,57,62],[36,43,50,55,60],[38,45,50,57,62]],
+      choir: 0.3, pad: 0.1, chant: 0.9, drone: 0.6, core: 0.3, space: "monastery", tuning: "285", stretch: 1.5, bells: true, range: "full", vowel: "oo" },
+    protectors: { name: "The Protectors (guardian theme)",
+      chords: [[38,50,57,62,66],[34,46,53,58,62],[36,48,55,60,64],[38,50,57,62,69]],
+      choir: 0.7, pad: 0.9, chant: 0, drone: 0.8, core: 0.7, space: "cathedral", tuning: "440", stretch: 2, bells: true, range: "full", vowel: "ah", bright: 2400 }
+  };
+
+  var VOWELS = { ah: [800, 1150, 2900], oh: [450, 800, 2830], oo: [325, 700, 2700] };
+  var MALE   = { ah: [650, 1080, 2650], oh: [400, 750, 2400], oo: [300, 870, 2240] };
+  var RANGE  = { deep: -12, full: 0, high: 12 };
+
+  function defaults() {
+    return { scene: "descent", space: "cathedral", tuning: "440", stretch: 1, reverb: 0.8,
+      choir: 0.8, pad: 0.25, chant: 0, drone: 0.7, core: 0.5, range: "full", vowel: "ah",
+      sub: 1, low: 1, mid: 1, high: 1, binaural: false, bells: true, bright: 900 };
+  }
+
+  function applyScene(S, name) {
+    var sc = SCENES[name]; S.scene = name;
+    ["choir","pad","chant","drone","core","space","tuning","stretch","bells","range","vowel"].forEach(function (k) { S[k] = sc[k]; });
+    S.bright = sc.bright || 900;
+    S.reverb = SPACES[sc.space].reverb;
+  }
+
+  function rng(seed) { // small repeatable random generator
+    return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  }
+
+  // Artificial room: stereo noise that fades out, darker for stone, ringing for metal
+  function impulse(ctx, sp) {
+    var rate = ctx.sampleRate, len = Math.floor(rate * sp.seconds);
+    var buf = ctx.createBuffer(2, len, rate), a = Math.exp(-2 * Math.PI * sp.tone / rate);
+    for (var c = 0; c < 2; c++) {
+      var d = buf.getChannelData(c), y = 0;
+      for (var i = 0; i < len; i++) { var x = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5); y = (1 - a) * x + a * y; d[i] = y; }
+      if (sp.metallic) { var k = Math.floor(rate * 0.011) + c * 37; for (var j = k; j < len; j++) d[j] += 0.55 * d[j - k]; }
+    }
+    return buf;
+  }
+
+  // Smooth parameter move. Never aims at exactly 0 (avoids a maths edge case in some audio engines).
+  function T(param, v, t, tc) { param.setTargetAtTime(Math.abs(v) < 1e-4 ? 1e-4 : v, t, tc); }
+
+  function create(ctx, out, S, seed) {
+    var rnd = rng(seed || 285);
+    var e = { ctx: ctx, S: S };
+    var tune = function () { return S.tuning === "285" ? 285 / 293.665 : 1; };
+    var f = function (m) { return mtof(m) * tune(); };
+    var stretch = function () { return Math.max(1, S.stretch); };
+    function gain(v) { var g = ctx.createGain(); g.gain.value = v === undefined ? 1 : v; return g; }
+    function osc(type, fr) { var o = ctx.createOscillator(); o.type = type; o.frequency.value = fr; return o; }
+    function filt(type, fr, q) { var b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = fr; b.Q.value = q || 0.707; return b; }
+    function pan(v) { // StereoPannerNode is missing before Safari 14.1: fall back to an equal-power PannerNode (same L/R gains)
+      if (ctx.createStereoPanner) { var p = ctx.createStereoPanner(); p.pan.value = v; return p; }
+      var q = ctx.createPanner(), a = v * Math.PI / 2; q.panningModel = "equalpower"; q.setPosition(Math.sin(a), 0, -Math.cos(a)); return q;
+    }
+    // Slow modulation at control rate (once per 128 samples): inaudible here, saves per-sample work. Older Safari has no automationRate.
+    function kRate(param) { if ("automationRate" in param) try { param.automationRate = "k-rate"; } catch (err) {} }
+    var starters = [];
+
+    // ---- mix buses ----
+    var bus = gain(), dry = gain(), wet = gain(), mixBus = gain();
+    bus.connect(dry); dry.connect(mixBus); bus.connect(wet);
+    var choirBus = gain(0), padBus = gain(0), chantBus = gain(0), droneBus = gain(0);
+    [choirBus, padBus, chantBus, droneBus].forEach(function (b) { b.connect(bus); });
+    var bellBus = gain(0), bellDry = gain(0.25);
+    bellBus.connect(wet); bellBus.connect(bellDry); bellDry.connect(mixBus);
+    var coreBus = gain(1); coreBus.connect(mixBus);          // sub core stays out of the reverb
+    var wetOut = gain(1); wetOut.connect(mixBus);            // all reverb returns meet here
+
+    // ---- safety limiter and master ----
+    var limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -14; limiter.knee.value = 6; limiter.ratio.value = 20;
+    limiter.attack.value = 0.003; limiter.release.value = 0.3;
+    var master = gain(0); limiter.connect(master);
+    // ---- hard safety ceiling after master: exact pass-through up to 0.8 (-1.9 dBFS), soft knee above,
+    // never above 0.889 (-1 dBFS), even for input beyond full scale. Odd curve with 0 -> 0, so no DC. ----
+    var ceiling = ctx.createWaveShaper(), curve = new Float32Array(4097);
+    for (var ci = 0; ci < 4097; ci++) { var cx = ci / 2048 - 1, ca = Math.abs(cx);
+      curve[ci] = ca <= 0.8 ? cx : (cx < 0 ? -1 : 1) * (0.8 + 0.091 * Math.tanh((ca - 0.8) / 0.091)); }
+    ceiling.curve = curve; ceiling.oversample = "none"; // 'none' keeps the linear part bit-transparent; the knee is a rare safety net
+    master.connect(ceiling); ceiling.connect(out);
+    e.analyser = ctx.createAnalyser(); e.analyser.fftSize = 2048; ceiling.connect(e.analyser);
+
+    // ---- 4-way crossover (Linkwitz-Riley 24 dB/oct): sub, low, mid, high ----
+    var edges = { sub: [["lowpass", 60]], low: [["highpass", 60], ["lowpass", 250]],
+                  mid: [["highpass", 250], ["lowpass", 4000]], high: [["highpass", 4000]] };
+    var bands = {};
+    Object.keys(edges).forEach(function (name) {
+      var node = mixBus;
+      edges[name].forEach(function (ed) { for (var k = 0; k < 2; k++) { var b = filt(ed[0], ed[1], Math.SQRT1_2); node.connect(b); node = b; } });
+      var g = gain(1); node.connect(g); g.connect(limiter); bands[name] = g;
+    });
+
+    // ---- reverb space (crossfades when changed) ----
+    var conv = null, oldConvs = [], irCache = {};
+    e.setSpace = function (name, t) {
+      t = t === undefined ? ctx.currentTime : t;
+      var c = ctx.createConvolver(); c.buffer = irCache[name] || (irCache[name] = impulse(ctx, SPACES[name])); // reuse: a 12 s impulse is slow to build on phones
+      var gi = gain(1), g = gain(0); wet.connect(gi); gi.connect(c); c.connect(g); g.connect(wetOut);
+      T(g.gain, 1, t, 0.8);
+      if (conv) { T(conv.g.gain, 0, t, 0.8); conv.end = t + 8; oldConvs.push(conv); } // silent after 10 time constants
+      conv = { gi: gi, c: c, g: g };
+    };
+    function dropOldConvs() { // disconnect faded-out reverbs so they stop using CPU and memory
+      oldConvs = oldConvs.filter(function (x) {
+        if (ctx.currentTime < x.end) return true;
+        x.gi.disconnect(); x.c.disconnect(); x.g.disconnect(); return false;
+      });
+    }
+
+    // ---- 5 voice slots: each has a choir voice and a synth pad ----
+    var slots = [];
+    for (var i = 0; i < 5; i++) slots.push((function (i) {
+      var p = -0.8 + i * 0.4;
+      var choirOut = gain(0), padOut = gain(0), mix = gain(0.5);
+      var cp = pan(p), pp = pan(-p * 0.7); // connect() does not return the node on older Safari, so no chaining
+      choirOut.connect(cp); cp.connect(choirBus); padOut.connect(pp); pp.connect(padBus);
+      var choirOsc = [], padOsc = [], bps = [];
+      [-8, 0, 8].forEach(function (det) {
+        var o = osc("sawtooth", 220); o.detune.value = det; kRate(o.detune);
+        var lfo = osc("sine", 4.2 + rnd() * 1.2), lg = gain(9);
+        lfo.connect(lg); lg.connect(o.detune); o.connect(mix);
+        starters.push(o, lfo); choirOsc.push(o);
+      });
+      [3, 1.8, 0.75].forEach(function (fg) {
+        var b = filt("bandpass", 800, 6), g = gain(fg); mix.connect(b); b.connect(g); g.connect(choirOut); bps.push(b);
+      });
+      var lp = filt("lowpass", 900, 3), plfo = osc("sine", 0.05), plg = gain(400); kRate(lp.frequency);
+      plfo.connect(plg); plg.connect(lp.frequency); lp.connect(padOut); starters.push(plfo);
+      [[-12, 1, "sawtooth"], [12, 1, "sawtooth"], [0, 0.5, "triangle"]].forEach(function (d) {
+        var o = osc(d[2], 220); o.detune.value = d[0]; var g = gain(0.5);
+        o.connect(g); g.connect(lp); starters.push(o); padOsc.push({ o: o, r: d[1] });
+      });
+      return {
+        choirOut: choirOut, padOut: padOut, plfo: plfo, lp: lp,
+        setChoir: function (fr, t, glide) { choirOsc.forEach(function (o) { T(o.frequency, fr, t, glide); }); },
+        setPad: function (fr, t, glide) { padOsc.forEach(function (x) { T(x.o.frequency, fr * x.r, t, glide); }); },
+        setVowel: function (v, t) { VOWELS[v].forEach(function (fr, k) { T(bps[k].frequency, fr, t, 0.6); }); }
+      };
+    })(i));
+
+    // ---- low drone and sub core ----
+    var droneLp = filt("lowpass", 280), droneOsc = [];
+    droneLp.connect(droneBus);
+    [[26, 0], [38, 0], [38, 11]].forEach(function (d) { var o = osc("sawtooth", 60); o.detune.value = d[1]; o.connect(droneLp); starters.push(o); droneOsc.push({ o: o, m: d[0] }); });
+    var coreOsc = osc("sine", 37), coreG = gain(0), coreLfo = osc("sine", 0.08), coreDepth = gain(0);
+    coreOsc.connect(coreG); coreG.connect(coreBus); coreLfo.connect(coreDepth); coreDepth.connect(coreG.gain);
+    starters.push(coreOsc, coreLfo);
+
+    // ---- monastic chant: two male voices singing one original line ----
+    var chantVoices = [], chantBps = [], chantEnv = gain(0);
+    chantEnv.connect(chantBus);
+    [[-10, -0.15], [10, 0.15]].forEach(function (d) {
+      var mix = gain(0.5), pn = pan(d[1]);
+      [0, 5].forEach(function (det) {
+        var o = osc("sawtooth", 147); o.detune.value = d[0] + det; kRate(o.detune);
+        var lfo = osc("sine", 4.8 + rnd()), lg = gain(7); lfo.connect(lg); lg.connect(o.detune);
+        o.connect(mix); starters.push(o, lfo); chantVoices.push(o);
+      });
+      [3, 1.6, 0.6].forEach(function (fg) { var b = filt("bandpass", 650, 7), g = gain(fg); mix.connect(b); b.connect(g); g.connect(pn); chantBps.push(b); });
+      pn.connect(chantEnv);
+    });
+
+    // ---- binaural layer (headphones): left and right tones 4 Hz apart ----
+    var binBus = gain(0); binBus.connect(limiter);
+    var binL = osc("sine", 142.5), binR = osc("sine", 146.5);
+    var bpL = pan(-1), bpR = pan(1); binL.connect(bpL); bpL.connect(binBus); binR.connect(bpR); bpR.connect(binBus); starters.push(binL, binR);
+
+    // ---- CPU saver: a layer whose level is 0 is disconnected once it has fully faded (12 time constants, about -80 dB,
+    // plus its tail), so its oscillators and filters are not processed. It is reconnected, still silent, before it fades
+    // back in. Oscillators keep running and all automation keeps being scheduled, so pitch and settings stay current.
+    var gates = [];
+    function gate(links, level, tail) { gates.push({ links: links, level: level, tail: tail || 0.5, on: true, offAt: null }); }
+    gate([[choirBus, bus]], function () { return S.choir; });
+    gate([[padBus, bus]], function () { return S.pad; });
+    gate([[chantBus, bus]], function () { return S.chant; });
+    // drone, core and binaural share exact frequencies (core = drone root f(26); binaural f(50) = 2 x drone f(38)),
+    // so they pause and resume together to keep their phase relationship (and so the sound) unchanged
+    gate([[droneBus, bus], [coreBus, mixBus], [binBus, limiter]], function () { return S.drone + S.core + (S.binaural ? 1 : 0); });
+    gate([[wetOut, mixBus]], function () { return S.reverb; }, 13); // 13 s: longest impulse tail
+    ["sub", "low", "mid", "high"].forEach(function (b) { gate([[bands[b], limiter]], function () { return S[b]; }); });
+    function setGates(t, tc) {
+      gates.forEach(function (g) {
+        if (g.level() > 0) { g.offAt = null; if (!g.on) { g.links.forEach(function (l) { l[0].connect(l[1]); }); g.on = true; } }
+        else if (g.on) g.offAt = Math.max(g.offAt || 0, t + 12 * tc + g.tail);
+      });
+    }
+    function closeGates() { // each gated node has exactly one output, so disconnect() only removes that link
+      gates.forEach(function (g) { if (g.on && g.offAt !== null && ctx.currentTime >= g.offAt) { g.links.forEach(function (l) { l[0].disconnect(); }); g.on = false; } });
+    }
+
+    // ---- apply mixer settings at time t ----
+    var lastChord = null;
+    e.apply = function (t, tc) {
+      t = t === undefined ? ctx.currentTime : t; tc = tc || 0.3;
+      setGates(t, tc); // reconnect raised layers before their gain starts rising
+      T(dry.gain, 1 - S.reverb * 0.75, t, tc);
+      T(wet.gain, S.reverb * 1.2, t, tc);
+      T(choirBus.gain, S.choir * 1.2, t, tc);
+      T(padBus.gain, S.pad * 0.8, t, tc);
+      T(chantBus.gain, S.chant * 1.3, t, tc);
+      T(droneBus.gain, S.drone * 0.35, t, tc);
+      T(bellBus.gain, S.bells ? 1 : 0, t, tc);
+      T(coreG.gain, S.core * 0.35, t, tc);
+      T(coreDepth.gain, S.core * 0.2, t, tc);
+      ["sub", "low", "mid", "high"].forEach(function (b) { T(bands[b].gain, S[b] * 0.5, t, tc); });
+      T(binBus.gain, S.binaural ? 0.08 : 0, t, tc);
+      T(binL.frequency, f(50), t, 1); T(binR.frequency, f(50) + 4, t, 1);
+      T(coreLfo.frequency, 0.08 / stretch(), t, 1);
+      slots.forEach(function (s) { T(s.lp.frequency, S.bright || 900, t, 2); s.setVowel(S.vowel, t); T(s.plfo.frequency, 0.05 / stretch(), t, 1); });
+      MALE[S.vowel].forEach(function (fr, k) { T(chantBps[k].frequency, fr, t, 0.6); T(chantBps[k + 3].frequency, fr, t, 0.6); });
+      if (lastChord) setChord(lastChord, t, 1.5);
+      else setChord(SCENES[S.scene].chords[0], t, 1.5);
+    };
+
+    function setChord(notes, t, glide) {
+      lastChord = notes;
+      t = t === undefined ? ctx.currentTime : t;
+      glide = glide || 1.2;
+      var off = RANGE[S.range] || 0;
+      slots.forEach(function (s, i) {
+        var n = notes[Math.min(i, notes.length - 1)];
+        s.setChoir(f(n + off), t, glide);   // choir follows the voice-range offset
+        s.setPad(f(n), t, glide * 1.35);    // pad stays at the written pitch so the bed does not jump octaves
+      });
+      droneOsc.forEach(function (x) { T(x.o.frequency, f(x.m), t, glide * 2); });
+      T(coreOsc.frequency, f(26), t, glide * 2);
+    }
+
+    // One original chant line, D-centred and mostly stepwise, so it sits on the drone without quoting liturgy.
+    var CHANT = [50, 53, 55, 53, 50, 48, 45, 50, 52, 53, 50, 45];
+    var chordI = 0, chantI = 0, nextChord = 0, nextChant = 0, nextBell = 0;
+
+    function ringBell(t) {
+      // Inharmonic partials (typical church-bell offsets), slight random detune, long decay into the wet bus.
+      var steps = [0, 5, 7], fund = f(57 + steps[Math.floor(rnd() * 3)]);
+      [0.5, 1, 1.183, 1.506, 2, 2.514, 3.14].forEach(function (r, i) {
+        var o = osc("sine", fund * r * (1 + (rnd() - 0.5) * 0.002));
+        var g = gain(0), lp = filt("lowpass", 4500 - i * 380);
+        o.connect(g); g.connect(lp); lp.connect(bellBus);
+        var peak = 0.2 / (1 + i * 0.7);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.018);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 5.5 + i * 0.45);
+        o.start(t); o.stop(t + 9);
+      });
+    }
+
+    e.tick = function () {
+      var t = ctx.currentTime, st = stretch();
+      dropOldConvs();
+      closeGates();
+      if (t >= nextChord) {
+        setChord(SCENES[S.scene].chords[chordI % SCENES[S.scene].chords.length], t, 1.5);
+        chordI++;
+        nextChord = t + 8 * st;
+      }
+      if (t >= nextChant) {
+        var n = CHANT[chantI % CHANT.length];
+        chantVoices.forEach(function (o) { T(o.frequency, f(n), t, 0.14); });
+        if (S.chant > 0) {
+          T(chantEnv.gain, 0.85, t, 0.06);
+          chantEnv.gain.setTargetAtTime(0.18, t + 0.85 * st, 0.32);
+        }
+        chantI++;
+        nextChant = t + 2.15 * st;
+      }
+      if (S.bells && t >= nextBell) {
+        ringBell(t);
+        nextBell = t + (9 + rnd() * 11) * st;
+      }
+    };
+
+    e.resetTimeline = function () {
+      lastChord = null;
+      chordI = 0; chantI = 0;
+      nextChord = ctx.currentTime;
+      nextChant = ctx.currentTime + 0.6;
+      nextBell = ctx.currentTime + 3.5;
+    };
+
+    e.start = function () {
+      var t = ctx.currentTime;
+      starters.forEach(function (n) { try { n.start(t); } catch (err) {} });
+      e.setSpace(S.space, t);
+      e.resetTimeline();
+      e.apply(t, 0.45);
+    };
+
+    e.setMaster = function (v, t, tc) {
+      t = t === undefined ? ctx.currentTime : t;
+      tc = tc || 0.08;
+      if (v < 1e-4) master.gain.setTargetAtTime(1e-4, t, tc);
+      else T(master.gain, v, t, tc);
+    };
+
+    e.fadeOut = function (tc) {
+      master.gain.setTargetAtTime(1e-4, ctx.currentTime, tc || 0.2);
+    };
+
+    e.cut = function () {
+      var t = ctx.currentTime;
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(0, t);
+    };
+
+    return e;
+  }
+
+  return {
+    SPACES: SPACES,
+    SCENES: SCENES,
+    defaults: defaults,
+    applyScene: applyScene,
+    create: create
+  };
+})();
+
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var sceneEl = $("scene"), spaceEl = $("space"), stretchVal = $("stretchVal");
+  var meterBar = $("meterBar"), meterText = $("meterText"), timerEl = $("timer");
+  var statusEl = $("status"), ringWrap = $("ringWrap");
+  var startBtn = $("start"), stopBtn = $("stop"), cutBtn = $("cut");
+  var S = SOUNDFEED.defaults();
+  SOUNDFEED.applyScene(S, S.scene);
+
+  var ctx = null, engine = null, running = false, raf = 0;
+  var sessionMs = 0, lastTick = 0, peakHold = 0;
+  var timeData = null;
+  var SAFETY = "Start quiet and raise slowly. Take a break every 30 minutes. The meter shows digital level, not how loud it is in the room.";
+
+  function fillSelect(el, map, keyName) {
+    Object.keys(map).forEach(function (k) {
+      var o = document.createElement("option");
+      o.value = k; o.textContent = map[k][keyName];
+      el.appendChild(o);
+    });
+  }
+  fillSelect(sceneEl, SOUNDFEED.SCENES, "name");
+  fillSelect(spaceEl, SOUNDFEED.SPACES, "name");
+
+  function pct(v) { return Math.round(v * 100); }
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  function syncControls() {
+    sceneEl.value = S.scene;
+    spaceEl.value = S.space;
+    $("tuning").value = S.tuning;
+    $("stretch").value = S.stretch;
+    stretchVal.textContent = S.stretch === 1 ? "1×" : S.stretch + "×";
+    $("reverb").value = pct(S.reverb);
+    $("choir").value = pct(S.choir);
+    $("pad").value = pct(S.pad);
+    $("chant").value = pct(S.chant);
+    $("drone").value = pct(S.drone);
+    $("core").value = pct(S.core);
+    $("range").value = S.range;
+    $("vowel").value = S.vowel;
+    $("bells").checked = !!S.bells;
+    $("binaural").checked = !!S.binaural;
+    $("sub").value = Math.round(S.sub * 100);
+    $("low").value = Math.round(S.low * 100);
+    $("mid").value = Math.round(S.mid * 100);
+    $("high").value = Math.round(S.high * 100);
+  }
+
+  function live() { if (engine && running) engine.apply(); }
+
+  function volGain(pctVal) {
+    pctVal = +pctVal;
+    if (pctVal <= 0) return 0;
+    return 0.4 * Math.pow(pctVal / 100, 1.6); // quiet at the default 30, never reaches unity
+  }
+
+  function fmtTime(ms) {
+    var s = Math.floor(ms / 1000), m = Math.floor(s / 60);
+    s = s % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  function resetMeter() {
+    meterBar.style.width = "0";
+    meterText.textContent = "-∞ dBFS";
+    ringWrap.style.transform = "scale(1)";
+    peakHold = 0;
+  }
+
+  function paintMeter() {
+    if (!engine || !engine.analyser) return;
+    if (!timeData || timeData.length !== engine.analyser.fftSize) {
+      timeData = new Float32Array(engine.analyser.fftSize);
+    }
+    engine.analyser.getFloatTimeDomainData(timeData);
+    var peak = 0, i;
+    for (i = 0; i < timeData.length; i++) {
+      var a = timeData[i]; if (a < 0) a = -a; if (a > peak) peak = a;
+    }
+    peakHold = peak > peakHold ? peak : peakHold * 0.92;
+    var shown = Math.max(peak, peakHold);
+    var db = shown < 1e-8 ? -Infinity : 20 * Math.log10(shown);
+    meterText.textContent = !isFinite(db) ? "-∞ dBFS" : db.toFixed(1) + " dBFS";
+    meterBar.style.width = Math.min(100, (shown / 0.89) * 100) + "%";
+    ringWrap.style.transform = "scale(" + (1 + Math.min(0.18, shown * 0.22)) + ")";
+  }
+
+  function loop(now) {
+    if (!running) return;
+    if (lastTick) sessionMs += now - lastTick;
+    lastTick = now;
+    timerEl.textContent = fmtTime(sessionMs);
+    if (sessionMs >= 30 * 60 * 1000) {
+      setStatus("Take a break — you have been listening for 30 minutes. The meter shows digital level, not how loud it is in the room.");
+    }
+    if (engine) engine.tick();
+    paintMeter();
+    raf = requestAnimationFrame(loop);
+  }
+
+  function setRunning(on) {
+    running = on;
+    startBtn.disabled = on;
+    stopBtn.disabled = !on;
+    if (on) lastTick = 0;
+  }
+
+  function start() {
+    try {
+      if (engine && ctx && ctx.state !== "closed") {
+        if (ctx.state === "suspended") ctx.resume();
+        engine.setMaster(volGain($("vol").value));
+        setRunning(true);
+        setStatus("Playing. Raise the master slowly. Use headphones or a full-range speaker for the sub band.");
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { setStatus("This browser has no Web Audio support."); return; }
+      ctx = new AC();
+      engine = SOUNDFEED.create(ctx, ctx.destination, S);
+      engine.start();
+      engine.setMaster(volGain($("vol").value));
+      if (ctx.state === "suspended") ctx.resume();
+      setRunning(true);
+      setStatus("Playing. Raise the master slowly. Use headphones or a full-range speaker for the sub band.");
+      raf = requestAnimationFrame(loop);
+    } catch (err) {
+      setStatus("Could not start audio. Tap Start again after interacting with the page.");
+    }
+  }
+
+  function stop() {
+    if (!engine) return;
+    engine.fadeOut(0.22);
+    setRunning(false);
+    if (raf) cancelAnimationFrame(raf);
+    resetMeter();
+    setStatus("Stopped. Press Start to continue this session.");
+    var c = ctx;
+    setTimeout(function () { if (c && c.state !== "closed") c.suspend(); }, 900);
+  }
+
+  function cut() {
+    if (engine) engine.cut();
+    if (raf) cancelAnimationFrame(raf);
+    if (ctx) { try { ctx.close(); } catch (err) {} }
+    ctx = null; engine = null; timeData = null;
+    setRunning(false);
+    sessionMs = 0; lastTick = 0;
+    timerEl.textContent = "0:00";
+    resetMeter();
+    startBtn.disabled = false;
+    setStatus("Emergency cut. Audio is fully silent. Press Start for a new session.");
+  }
+
+  sceneEl.addEventListener("change", function () {
+    SOUNDFEED.applyScene(S, sceneEl.value);
+    syncControls();
+    if (engine) { engine.resetTimeline(); engine.setSpace(S.space); engine.apply(); }
+  });
+  spaceEl.addEventListener("change", function () {
+    S.space = spaceEl.value;
+    if (engine) engine.setSpace(S.space);
+  });
+  $("tuning").addEventListener("change", function () { S.tuning = this.value; live(); });
+  $("stretch").addEventListener("input", function () {
+    S.stretch = +this.value;
+    stretchVal.textContent = S.stretch === 1 ? "1×" : S.stretch + "×";
+    live();
+  });
+  ["reverb","choir","pad","chant","drone","core"].forEach(function (k) {
+    $(k).addEventListener("input", function () { S[k] = this.value / 100; live(); });
+  });
+  ["sub","low","mid","high"].forEach(function (k) {
+    $(k).addEventListener("input", function () { S[k] = this.value / 100; live(); });
+  });
+  $("range").addEventListener("change", function () { S.range = this.value; live(); });
+  $("vowel").addEventListener("change", function () { S.vowel = this.value; live(); });
+  $("bells").addEventListener("change", function () { S.bells = this.checked; live(); });
+  $("binaural").addEventListener("change", function () { S.binaural = this.checked; live(); });
+  $("vol").addEventListener("input", function () {
+    if (engine) engine.setMaster(volGain(this.value));
+  });
+
+  startBtn.addEventListener("click", start);
+  stopBtn.addEventListener("click", stop);
+  cutBtn.addEventListener("click", cut);
+  window.addEventListener("pagehide", function () { if (running) stop(); });
+
+  stopBtn.disabled = true;
+  syncControls();
+})();
+</script>
+</body>
+</html>
